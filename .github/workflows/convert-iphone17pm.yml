@@ -1,0 +1,120 @@
+name: Convert iPhone 17 PM source images to JPG
+
+on:
+  push:
+    paths:
+      - "CCCC/iphone17pm_source*.png"
+      - ".github/workflows/convert-iphone17pm.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Install Pillow
+        run: python -m pip install --upgrade pillow
+      - name: Convert, label, and compress
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from PIL import Image, ImageDraw, ImageFont
+
+          root = Path("CCCC")
+          sources = sorted(root.glob("iphone17pm_source*.png"))
+          if not sources:
+              print("No source files found.")
+              raise SystemExit(0)
+
+          bold_candidates = [
+              "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+              "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
+          ]
+          regular_candidates = [
+              "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+              "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+          ]
+          bold = next((p for p in bold_candidates if Path(p).exists()), bold_candidates[0])
+          regular = next((p for p in regular_candidates if Path(p).exists()), regular_candidates[0])
+
+          def font(size, is_bold=True):
+              return ImageFont.truetype(bold if is_bold else regular, size)
+
+          specs = {
+              "iphone17pm_source1.png": [
+                  ("For iPhone", 54, True),
+                  ("HD CLARITY", 44, True),
+                  ("FULL FRONT COVERAGE", 30, False),
+              ],
+              "iphone17pm_source2.png": [
+                  ("HD CLARITY", 50, True),
+                  ("Clear view. Clean detail.", 24, False),
+              ],
+              "iphone17pm_source3.png": [
+                  ("BLACK EDGE", 46, True),
+                  ("PRECISE FULL-COVERAGE FIT", 26, False),
+              ],
+              "iphone17pm_source4.png": [
+                  ("FULL-SCREEN COVERAGE", 38, True),
+                  ("Front-face protection", 24, False),
+              ],
+              "iphone17pm_source5.png": [
+                  ("HD CLARITY", 42, True),
+                  ("BLACK EDGE FINISH", 30, False),
+              ],
+          }
+
+          for src in sources:
+              im = Image.open(src).convert("RGB").resize((1000, 1000), Image.Resampling.LANCZOS)
+              layer = Image.new("RGBA", im.size, (0, 0, 0, 0))
+              draw = ImageDraw.Draw(layer)
+              idx = src.name
+              if idx == "iphone17pm_source1.png":
+                  panel = (34, 34, 300, 210)
+              elif idx == "iphone17pm_source3.png":
+                  panel = (32, 42, 410, 160)
+              else:
+                  panel = (32, 34, 520, 160)
+              x0, y0, x1, y1 = panel
+              draw.rounded_rectangle(panel, radius=22, fill=(10, 14, 25, 175), outline=(255, 255, 255, 45), width=2)
+              y = y0 + 22
+              for n, (label, size, is_bold) in enumerate(specs.get(idx, [])):
+                  fill = (255, 255, 255, 255) if n == 0 else ((200, 226, 255, 255) if n == 1 else (230, 236, 245, 255))
+                  draw.text((x0 + 22, y), label, font=font(size, is_bold), fill=fill)
+                  y += size + (14 if is_bold else 8)
+              if idx == "iphone17pm_source1.png":
+                  bx, by, bw, bh = 750, 64, 178, 92
+                  draw.rounded_rectangle((bx, by, bx + bw, by + bh), radius=20, fill=(12, 20, 37, 220), outline=(205, 225, 255, 230), width=3)
+                  draw.text((bx + 31, by + 4), "3", font=font(48, True), fill="white")
+                  draw.text((bx + 87, by + 21), "PCS", font=font(20, True), fill=(210, 230, 255, 255))
+              im = Image.alpha_composite(im.convert("RGBA"), layer).convert("RGB")
+              out = root / idx.replace("_source", "").replace(".png", ".jpg")
+              quality = 88
+              while quality >= 55:
+                  im.save(out, "JPEG", quality=quality, optimize=True, progressive=True, subsampling=2)
+                  if out.stat().st_size < 500_000:
+                      break
+                  quality -= 3
+              if out.stat().st_size >= 500_000:
+                  raise RuntimeError(f"{out} exceeds 500 KB")
+              src.unlink()
+              print(out, im.size, out.stat().st_size, quality)
+          PY
+      - name: Commit JPG outputs
+        run: |
+          if git diff --quiet -- CCCC; then
+            echo "No converted files to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CCCC
+          git commit -m "Add iPhone 17 Pro Max Temu JPG set"
+          git push
